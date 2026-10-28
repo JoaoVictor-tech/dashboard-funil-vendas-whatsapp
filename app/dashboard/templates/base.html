@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>{% block title %}{{ titulo }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ versao }}" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📊</text></svg>" />
+  <script>
+    // tema salvo neste navegador, aplicado antes da pintura para nao piscar
+    try { const t = localStorage.getItem('tema'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <script src="/static/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topo">
+  <div class="topo-linha">
+    <div class="marca">{{ empresa }} <span>{{ nome_unidades }}</span> · Monitor de Funil</div>
+    <nav class="abas">
+      {% set atual = request.url.path %}
+      <a href="/dashboard/?{{ qs }}"      class="{{ 'ativa' if atual == '/dashboard/' }}">Origem, investimento &amp; ROI</a>
+      <a href="/dashboard/funil?{{ qs }}" class="{{ 'ativa' if atual.startswith('/dashboard/funil') }}">Funil &amp; time</a>
+    </nav>
+    <button type="button" class="tema" id="botao-tema" aria-label="Alternar tema claro/escuro" title="Tema claro / escuro">🌙</button>
+  </div>
+</header>
+
+{% block filtros %}
+<section class="filtros">
+  <form method="get" action="{{ request.url.path }}" id="filtros">
+    <div class="campo">
+      <label for="f-unidade">Unidade</label>
+      <select id="f-unidade" name="unidade">
+        {% for u in unidades %}
+        <option value="{{ u.chave }}" {{ 'selected' if unidade_param == u.chave }}>{{ u.nome }}</option>
+        {% endfor %}
+        <option value="todas" {{ 'selected' if unidade_param == 'todas' }}>Todas as unidades</option>
+      </select>
+    </div>
+    <div class="campo">
+      <label for="f-de">De</label>
+      <input type="date" id="f-de" name="de" value="{{ filtros.de }}" min="{{ backfill_inicio }}" max="{{ hoje }}" required />
+    </div>
+    <div class="campo">
+      <label for="f-ate">Até</label>
+      <input type="date" id="f-ate" name="ate" value="{{ filtros.ate }}" min="{{ backfill_inicio }}" max="{{ hoje }}" required />
+    </div>
+    <div class="campo">
+      <label for="f-origem">Origem</label>
+      <select id="f-origem" name="origem">
+        <option value="">Todas</option>
+        {% for o in opcoes.origens %}
+        <option value="{{ o }}" {{ 'selected' if filtros.origem == o }}>{{ o }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="f-campanha">Campanha</label>
+      <select id="f-campanha" name="campanha">
+        <option value="">Todas</option>
+        {% for c in opcoes.campanhas %}
+        <option value="{{ c }}" {{ 'selected' if filtros.campanha == c }}>{{ c | curta }}</option>
+        {% endfor %}
+        {% if filtros.campanha and filtros.campanha not in opcoes.campanhas %}
+        <option value="{{ filtros.campanha }}" selected>{{ filtros.campanha | curta }}</option>
+        {% endif %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="f-vendedor">Vendedor</label>
+      <select id="f-vendedor" name="vendedor">
+        <option value="">Todos</option>
+        {% for v in opcoes.vendedores %}
+        <option value="{{ v }}" {{ 'selected' if filtros.vendedor == v }}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Aplicar</button>
+    <a class="botao secundario" href="{{ request.url.path }}?unidade={{ unidade_param }}">Limpar</a>
+    <span class="periodo-ativo">{{ filtros.de | br('%d/%m/%Y') }} – {{ filtros.ate | br('%d/%m/%Y') }} · {{ dias }} dia{{ 's' if dias != 1 }}{% if not filtros.datas_explicitas %} · <span class="muted">último mês</span>{% endif %}</span>
+  </form>
+  <script>
+    // Regra do calendario: toda vez que o painel e ABERTO (link, favorito, F5) ele mostra
+    // "hoje - 1 mes -> hoje". A data escolhida vale so enquanto a pessoa navega; por isso o
+    // endereco na barra nunca guarda De/Ate - assim que a pagina carrega, eles saem da URL.
+    (function () {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('de') || url.searchParams.has('ate')) {
+          url.searchParams.delete('de'); url.searchParams.delete('ate');
+          history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
+        }
+      } catch (e) {}
+    })();
+  </script>
+  {% if avisos %}
+  <div class="avisos">
+    {% for a in avisos %}<span class="selo alerta">{{ a }}</span>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<script>
+// ---- paleta e defaults compartilhados por todos os graficos ----------------
+const escuro = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+(function () {
+  const b = document.getElementById('botao-tema');
+  if (!b) return;
+  b.textContent = escuro ? '☀️' : '🌙';
+  b.addEventListener('click', () => {
+    try { localStorage.setItem('tema', escuro ? 'light' : 'dark'); } catch (e) {}
+    location.reload();   // os graficos leem as cores na carga
+  });
+})();
+const CORES = ['#2563eb','#db2777','#d97706','#0d9488','#7c3aed','#dc2626','#0891b2','#65a30d','#475569','#ca8a04'];
+Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+Chart.defaults.font.size = 12;
+Chart.defaults.color = escuro ? '#94a3b8' : '#64748b';
+Chart.defaults.borderColor = escuro ? '#24303f' : '#e3e8ef';
+Chart.defaults.plugins.legend.labels.boxWidth = 10;
+Chart.defaults.plugins.legend.labels.usePointStyle = true;
+Chart.defaults.maintainAspectRatio = false;
+
+const fmtBRL = v => 'R$ ' + Math.round(v).toLocaleString('pt-BR');
+const fmtN = v => Math.round(v).toLocaleString('pt-BR');
+const fmtBRL2 = v => 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Texto no fim de cada barra (ex.: "R$ 10,27 · 167 leads") - so em graficos que passam `rotulos`.
+const rotuloNaBarra = {
+  id: 'rotuloNaBarra',
+  afterDatasetsDraw(chart) {
+    const r = chart.config.options.rotulosBarra; if (!r) return;
+    const { ctx } = chart; const meta = chart.getDatasetMeta(0);
+    ctx.save(); ctx.font = '600 11px system-ui, sans-serif'; ctx.fillStyle = escuro ? '#e6edf5' : '#14202c'; ctx.textBaseline = 'middle';
+    meta.data.forEach((el, i) => { if (r[i] == null) return; ctx.fillText(r[i], el.x + 6, el.y); });
+    ctx.restore();
+  },
+};
+Chart.register(rotuloNaBarra);
+
+// Clicar num item de grafico aplica o filtro correspondente na pagina inteira.
+function filtrar(param, valor) {
+  const url = new URL(window.location.href);
+  const form = document.getElementById('filtros');
+  if (form) new FormData(form).forEach((v, k) => { if (v) url.searchParams.set(k, v); else url.searchParams.delete(k); });
+  if (url.searchParams.get(param) === valor) url.searchParams.delete(param); else url.searchParams.set(param, valor);
+  window.location.href = url.toString();
+}
+function aoClicar(cfg, onClick) {
+  cfg.options = cfg.options || {};
+  cfg.options.onClick = (ev, itens) => { if (itens.length) onClick(itens[0].index); };
+  cfg.options.onHover = (ev, itens) => { ev.native.target.style.cursor = itens.length ? 'pointer' : 'default'; };
+  return cfg;
+}
+
+function grafico(id, config) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  return new Chart(el, config);
+}
+
+// Total no centro da rosca: o numero que as fatias somam fica sempre visivel.
+const totalNoCentro = {
+  id: 'totalNoCentro',
+  afterDraw(chart) {
+    const o = chart.config.options.totalCentro; if (!o) return;
+    const { ctx, chartArea: a } = chart; const x = (a.left + a.right) / 2, y = (a.top + a.bottom) / 2;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = escuro ? '#e6edf5' : '#14202c'; ctx.font = '700 22px system-ui, sans-serif'; ctx.fillText(o.valor, x, y - 8);
+    ctx.fillStyle = escuro ? '#94a3b8' : '#64748b'; ctx.font = '600 10px system-ui, sans-serif'; ctx.fillText(o.rotulo.toUpperCase(), x, y + 12);
+    ctx.restore();
+  },
+};
+Chart.register(totalNoCentro);
+
+function rosca(id, rotulos, valores, cores, opcoes = {}) {
+  const total = valores.reduce((a, b) => a + b, 0);
+  const fmt = opcoes.formato || fmtN;
+  const cfg = {
+    type: 'doughnut',
+    data: { labels: rotulos.map((r, i) => `${r} · ${fmt(valores[i])} (${total ? (100 * valores[i] / total).toFixed(0) : 0}%)`), datasets: [{ data: valores, backgroundColor: cores || CORES, borderWidth: 2, borderColor: escuro ? '#151f2c' : '#fff' }] },
+    options: {
+      cutout: '62%',
+      totalCentro: { valor: fmt(total), rotulo: opcoes.rotuloTotal || 'total' },
+      plugins: {
+        legend: { position: opcoes.legenda || 'right' },
+        tooltip: { callbacks: { label: c => ` ${rotulos[c.dataIndex]}: ${fmt(c.parsed)} (${total ? (100 * c.parsed / total).toFixed(1) : 0}%)` + (opcoes.clique ? ' · clique para filtrar' : '') } },
+      },
+    },
+  };
+  return grafico(id, opcoes.clique ? aoClicar(cfg, opcoes.clique) : cfg);
+}
+
+function barras(id, rotulos, series, opcoes = {}) {
+  const formato = opcoes.formato || fmtN;
+  const maior = Math.max(0, ...series.flatMap(s => s.dados));
+  const cfg = {
+    type: 'bar',
+    data: {
+      labels: rotulos,
+      datasets: series.map((s, i) => ({
+        label: s.nome, data: s.dados,
+        backgroundColor: s.cores || s.cor || CORES[i % CORES.length],
+        borderRadius: 4, borderSkipped: false,
+      })),
+    },
+    options: {
+      indexAxis: opcoes.horizontal ? 'y' : 'x',
+      rotulosBarra: opcoes.rotulos || null,
+      layout: opcoes.rotulos ? { padding: { right: 150 } } : {},
+      plugins: {
+        legend: { display: series.length > 1 },
+        tooltip: { callbacks: { label: c => ` ${c.dataset.label ? c.dataset.label + ': ' : ''}${formato(c.parsed[opcoes.horizontal ? 'x' : 'y'])}` + (opcoes.clique ? ' · clique para filtrar' : '') } },
+      },
+      scales: {
+        x: { stacked: !!opcoes.empilhado, grid: { display: !!opcoes.horizontal }, ticks: opcoes.horizontal ? { callback: v => formato(v) } : {} },
+        y: { stacked: !!opcoes.empilhado, beginAtZero: true, grid: { display: !opcoes.horizontal }, ticks: opcoes.horizontal ? {} : { callback: v => formato(v) } },
+      },
+    },
+  };
+  return grafico(id, opcoes.clique ? aoClicar(cfg, opcoes.clique) : cfg);
+}
+
+function linhas(id, rotulos, series) {
+  return grafico(id, {
+    type: 'line',
+    data: {
+      labels: rotulos,
+      datasets: series.map((s, i) => ({
+        label: s.nome, data: s.dados,
+        borderColor: s.cor || CORES[i % CORES.length],
+        backgroundColor: (s.cor || CORES[i % CORES.length]) + '22',
+        fill: !!s.area, tension: .3, pointRadius: 2, borderWidth: 2,
+      })),
+    },
+    options: { interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true } } },
+  });
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

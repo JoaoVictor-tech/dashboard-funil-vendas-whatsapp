@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+
+<h1>Origem de leads, investimento e ROI</h1>
+<p class="legenda">
+  {{ filtros.de | br('%d/%m/%Y') }} a {{ filtros.ate | br('%d/%m/%Y') }} · {{ nome_unidades }}
+  {% if filtros.origem %}· origem <b>{{ filtros.origem }}</b>{% endif %}
+  {% if filtros.campanha %}· campanha <b>{{ filtros.campanha | curta }}</b>{% endif %}
+  {% if filtros.vendedor %}· vendedor <b>{{ filtros.vendedor }}</b> (vale para conversas e vendas; investimento e leads das plataformas não têm vendedor){% endif %}
+  {% if midia.dias and midia.dias < dias %}· <span class="selo alerta">mídia coletada em {{ midia.dias | int }} de {{ dias }} dias</span>{% endif %}
+  · <span class="muted">clique numa fatia ou barra para filtrar por aquela origem ou campanha</span>
+</p>
+
+<div class="grade g7" style="margin-bottom:14px">
+  {{ m.kpi('Investimento em mídia', midia.invest_meta + midia.invest_google, 'Meta Ads + Google Ads no período', formato='brl', dica='Quanto foi gasto em anúncios no período (Meta Ads + Google Ads), direto das plataformas via Reportei.') }}
+  {{ m.kpi('Meta Ads', midia.invest_meta, (midia.conversas_meta | num) ~ ' conversas iniciadas' ~ (' · CPL ' ~ ((midia.invest_meta / midia.conversas_meta) | brl(2)) if midia.conversas_meta else ''), formato='brl', dica='Facebook + Instagram + outros canais da Meta. Conversas iniciadas = pessoas que clicaram no anúncio e mandaram mensagem, segundo a Meta. CPL = investimento / conversas.') }}
+  {{ m.kpi('Google Ads', midia.invest_google, (midia.leads_google | num) ~ ' contatos' ~ (' · CPL ' ~ ((midia.invest_google / midia.leads_google) | brl(2)) if midia.leads_google else ''), formato='brl', dica='Google Ads. Contatos = cliques em botão de WhatsApp ou formulário, segundo o Google. CPL = investimento / contatos.') }}
+  {{ m.kpi('Disparos de WhatsApp', disparos.enviados, (disparos.respondidos | num) ~ ' responderam · ' ~ (disparos.vendas | num) ~ ' vendas · ' ~ (disparos.receita | brl), dica='Mensagens de campanha que a loja enviou pela Helena para a própria base no período. Responderam = o cliente escreveu depois do disparo. Vendas = o telefone que recebeu o disparo comprou depois (DMS). Detalhe por campanha na tabela "Campanhas de disparo", no fim da página.') }}
+  {{ m.kpi('Vendas originadas em anúncio', vendas.com_anuncio, 'de ' ~ (vendas.total | num) ~ ' vendas no período · ' ~ (vendas.receita_anuncio | brl), dica='Carros vendidos no período (DMS) cujo comprador chegou clicando num anúncio de Facebook, Instagram ou Google.') }}
+  {{ m.kpi('Total de Vendas (Disparos + Anúncios)', digitais.total, (digitais.anuncio | num) ~ ' anúncio + ' ~ (digitais.disparo | num) ~ ' disparo' ~ ((' − ' ~ (digitais.ambos | num) ~ ' em ambos') if digitais.ambos else ''), dica='Carros vendidos que tiveram anúncio ou disparo antes da compra. Uma venda que teve os dois conta uma vez só.') }}
+  {{ m.kpi('Receita total (Disparos + Anúncios)', digitais.receita, 'anúncio ' ~ (vendas.receita_anuncio | brl) ~ ' · disparo ' ~ (disparos.receita | brl), formato='brl', dica='Soma do valor de venda (preço do veículo, bruto) dos carros do quadro ao lado — anúncio + disparo, sem contar duas vezes a venda que teve os dois. Não é lucro nem margem.') }}
+</div>
+
+<div class="grade g2">
+  <div class="cartao largo">
+    <h2>Dia a dia · leads das plataformas × conversas na Helena {{ m.ajuda('A linha cinza é o que as plataformas reportaram por dia; a azul é o que virou conversa de verdade. Quando a cinza fica muito acima da azul, parte dos cliques não chegou ao WhatsApp.') }}</h2>
+    <p class="nota">Meta + Google reportados pelas plataformas, contra o que virou conversa real na Helena</p>
+    <div style="height:260px"><canvas id="g_serie"></canvas></div>
+  </div>
+
+  <div class="cartao largo">
+    <h2>Origem dos leads por mídia {{ m.ajuda('De onde veio cada conversa, pela etiqueta do anúncio. "Sem UTM" = chegou sem etiqueta: orgânico, Google (o Google não manda etiqueta) ou contato direto.') }}</h2>
+    <p class="nota">Conversas iniciadas pelo cliente na Helena · mídia pela UTM do clique no anúncio</p>
+    <div style="height:280px"><canvas id="g_midia"></canvas></div>
+  </div>
+
+  <div class="cartao largo">
+    <h2>Origem dos leads por campanha {{ m.ajuda('Só conversas que vieram de anúncio Meta. "Anúncio não identificado" = o anúncio existe mas não está na lista de campanhas do Reportei (campanha antiga ou conta sem integração). Clique numa barra para filtrar por aquela campanha.') }}</h2>
+    <p class="nota">Todas as conversas de mídia paga Meta, inclusive as sem campanha identificada · fora só o orgânico/sem UTM · <b>{{ conversas.meta | num }} conversas</b> no total</p>
+    <div style="height: {{ [200, 24 * por_campanha | length + 50] | max }}px"><canvas id="g_campanha"></canvas></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Investimento por mídia {{ m.ajuda('Meta = Facebook + Instagram + outros canais da Meta (WhatsApp, Messenger, Audience Network). As quatro barras somam o KPI de investimento.') }}</h2>
+    <p class="nota">Meta Ads separado por Facebook, Instagram e outros canais · Google Ads · fonte Reportei</p>
+    <div style="height:200px"><canvas id="g_inv_midia"></canvas></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Investimento por campanha {{ m.ajuda('Gasto de cada campanha no período. Campanhas Meta aparecem divididas em Facebook e Instagram (e uma fatia pequena de outros canais, como WhatsApp). Clique numa barra para ver só aquela campanha.') }}</h2>
+    <p class="nota">Gasto reportado pela plataforma no período · campanhas Meta divididas por canal</p>
+    <div style="height: {{ [170, 26 * campanhas.linhas | length + 40] | max }}px"><canvas id="g_inv_campanha"></canvas></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Custo por lead por campanha (qtde identificada nas plataformas de mídia) {{ m.ajuda('Barra = CPL (investimento / leads que a PRÓPRIA plataforma reportou). Ao lado da barra: o CPL e a quantidade de leads. Meta: conversas iniciadas; Google: conversões reportadas por campanha (todas as ações). Clique numa barra para filtrar pela campanha.') }}</h2>
+    <p class="nota"><span class="ponto" style="background:#475569"></span> Meta Ads <span class="ponto" style="background:#d97706;margin-left:8px"></span> Google Ads · totais da conta: Meta Ads {{ campanhas.meta.cpl_plataforma | brl(2) if campanhas.meta.cpl_plataforma else '—' }} ({{ campanhas.meta.leads_plataforma | num }} conversas) · Google Ads {{ campanhas.google.cpl_plataforma | brl(2) if campanhas.google.cpl_plataforma else '—' }} ({{ campanhas.google.leads_plataforma | num }} contatos)</p>
+    {% set n1 = campanhas.linhas | selectattr('cpl_plataforma') | list | length %}
+    {% if n1 %}<div style="height: {{ [160, 30 * n1 + 40] | max }}px"><canvas id="g_cpl_plat"></canvas></div>{% else %}<div class="vazio">Sem investimento coletado no período.</div>{% endif %}
+  </div>
+
+  <div class="cartao">
+    <h2>Custo por lead por campanha (qtde identificada por conversas iniciadas na Helena) {{ m.ajuda('Barra = CPL (investimento da campanha / conversas REAIS que chegaram com a etiqueta daquela campanha). Ao lado da barra: o CPL e a quantidade de conversas. Só campanhas Meta — o Google não manda etiqueta para a Helena. Clique numa barra para filtrar pela campanha.') }}</h2>
+    <p class="nota">Meta Ads · total da conta: {{ campanhas.meta.cpl_conversas | brl(2) if campanhas.meta.cpl_conversas else '—' }} ({{ campanhas.meta.conversas | num }} conversas){% if campanhas.fora_do_periodo.conversas %} · {{ campanhas.fora_do_periodo.conversas | num }} conversas de campanhas fora do período{% endif %}{% if campanhas.fora_do_periodo.conversas_nao_identificadas %} · {{ campanhas.fora_do_periodo.conversas_nao_identificadas | num }} de anúncio não identificado{% endif %}</p>
+    {% set n2 = campanhas.linhas | selectattr('cpl_conversas') | list | length %}
+    {% if n2 %}<div style="height: {{ [160, 30 * n2 + 40] | max }}px"><canvas id="g_cpl_conv"></canvas></div>{% else %}<div class="vazio">Sem conversas de campanha no período.</div>{% endif %}
+  </div>
+
+  <div class="cartao">
+    <h2>Origem dos leads que compraram veículo {{ m.ajuda('Todas as vendas do período, separadas por onde o comprador veio: anúncio (Facebook, Instagram, Google), disparo de WhatsApp da própria base, ou sem origem digital identificada (balcão, indicação, telefone).') }}</h2>
+    <p class="nota">Vendas do DMS cruzadas com o contato da Helena · {{ vendas.total | num }} vendas no período</p>
+    <div style="height:300px"><canvas id="g_vendas_origem"></canvas></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Custo de aquisição por campanha {{ m.ajuda('CAC = quanto a campanha gastou / quantos carros ela vendeu no período. Só vale para campanhas Meta com investimento no período.') }}</h2>
+    <p class="nota">Investimento na campanha / vendas originadas nela (só campanhas Meta com investimento no período)</p>
+    <div class="rolagem">
+      <table class="compacta">
+        <thead><tr><th>Campanha</th><th>Origem</th><th class="num">Vendas</th><th class="num">CAC</th></tr></thead>
+        <tbody>
+          {% for l in (campanhas.linhas | selectattr('plataforma', 'equalto', 'Meta') | sort(attribute='vendas', reverse=True) | list)[:10] %}
+          <tr><td><a class="link-filtro" href="?{{ qs }}&campanha={{ l.campanha | urlencode }}">{{ l.campanha | curta }}</a></td><td class="origem">{{ l.origem }}</td><td class="num">{{ l.vendas | num }}</td><td class="num">{{ l.cac | brl if l.cac else '—' }}</td></tr>
+          {% endfor %}
+          <tr class="total"><td>Meta Ads — campanhas do período</td><td></td><td class="num">{{ campanhas.meta.vendas | num }}</td><td class="num">{{ campanhas.meta.cac | brl if campanhas.meta.cac else '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="cartao largo destaque">
+    <h2>ROI por campanha {{ m.ajuda('Retorno = valor dos carros vendidos pela campanha / o que a campanha gastou. Ex.: 60× = cada R$ 1 investido virou R$ 60 em venda. É receita bruta (preço do carro), não lucro.') }}</h2>
+    <p class="nota">Receita das vendas atribuídas (valor vendido no DMS) / investimento da campanha no período · receita bruta, não margem</p>
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>Campanha</th><th>Origem</th><th class="num">Investimento</th><th class="num">Conversas Helena</th><th class="num">Vendas</th><th class="num">Receita (valor vendido)</th><th class="num">CAC</th><th class="num">Retorno</th></tr></thead>
+        <tbody>
+          {% for l in campanhas.linhas if l.plataforma == 'Meta' %}
+          <tr>
+            <td><a class="link-filtro" href="?{{ qs }}&campanha={{ l.campanha | urlencode }}">{{ l.campanha | curta }}</a></td>
+            <td class="origem">{{ l.origem }}</td>
+            <td class="num">{{ l.investimento | brl }}</td>
+            <td class="num">{{ l.conversas | num }}</td>
+            <td class="num">{{ l.vendas | num }}</td>
+            <td class="num">{{ l.receita | brl if l.vendas else '—' }}</td>
+            <td class="num">{{ l.cac | brl if l.cac else '—' }}</td>
+            <td class="num {{ 'ok' if l.retorno }}">{{ l.retorno | vezes if l.retorno else '—' }}</td>
+          </tr>
+          {% endfor %}
+          {% if campanhas.fora_do_periodo.vendas %}
+          <tr class="muted"><td>Vendas de anúncios de campanhas anteriores ao período ({{ campanhas.fora_do_periodo.campanhas | map('curta') | join(', ') }})</td><td></td><td class="num">—</td><td class="num">—</td><td class="num">{{ campanhas.fora_do_periodo.vendas | num }}</td><td class="num">{{ campanhas.fora_do_periodo.receita | brl }}</td><td class="num">—</td><td class="num">—</td></tr>
+          {% endif %}
+          {% if campanhas.nao_identificadas.vendas %}
+          <tr class="muted"><td>Vendas de anúncios Meta não identificados (ID do anúncio sem campanha no Reportei)</td><td></td><td class="num">—</td><td class="num">—</td><td class="num">{{ campanhas.nao_identificadas.vendas | num }}</td><td class="num">{{ campanhas.nao_identificadas.receita | brl }}</td><td class="num">—</td><td class="num">—</td></tr>
+          {% endif %}
+          <tr class="total"><td>Meta Ads — campanhas do período</td><td></td><td class="num">{{ campanhas.meta.investimento | brl }}</td><td class="num">{{ campanhas.meta.conversas | num }}</td><td class="num">{{ campanhas.meta.vendas | num }}</td><td class="num">{{ campanhas.meta.receita | brl }}</td><td class="num">{{ campanhas.meta.cac | brl if campanhas.meta.cac else '—' }}</td><td class="num {{ 'ok' if campanhas.meta.retorno }}">{{ campanhas.meta.retorno | vezes if campanhas.meta.retorno else '—' }}</td></tr>
+          <tr class="total"><td><b>Total — vendas originadas em anúncio</b> (campanhas do período + anteriores + não identificados + Google)</td><td></td><td class="num">{{ (campanhas.meta.investimento + campanhas.google.investimento) | brl }}</td><td class="num">{{ campanhas.meta.conversas | num }}</td><td class="num"><b>{{ vendas.com_anuncio | num }}</b></td><td class="num"><b>{{ vendas.receita_anuncio | brl }}</b></td><td class="num">{{ ((campanhas.meta.investimento + campanhas.google.investimento) / vendas.com_anuncio) | brl if vendas.com_anuncio else '—' }}</td><td class="num">{{ (vendas.receita_anuncio / (campanhas.meta.investimento + campanhas.google.investimento)) | vezes if vendas.receita_anuncio and (campanhas.meta.investimento + campanhas.google.investimento) else '—' }}</td></tr>
+          <tr class="muted"><td>Disparos de WhatsApp (base própria, sem investimento em mídia)</td><td>Disparo</td><td class="num">—</td><td class="num">—</td><td class="num">{{ disparos.vendas | num }}</td><td class="num">{{ disparos.receita | brl if disparos.vendas else '—' }}</td><td class="num">—</td><td class="num">—</td></tr>
+          <tr class="muted"><td>Google Ads (todas as campanhas)</td><td>Google Ads</td><td class="num">{{ campanhas.google.investimento | brl }}</td><td class="num">não identificável</td><td class="num">{{ campanhas.google.vendas | num }}</td><td class="num">{{ campanhas.google.receita | brl if campanhas.google.vendas else '—' }}</td><td class="num">{{ campanhas.google.cac | brl if campanhas.google.cac else '—' }}</td><td class="num {{ 'ok' if campanhas.google.retorno }}">{{ campanhas.google.retorno | vezes if campanhas.google.retorno else '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="nota"><b>Leitura:</b> retorno = receita bruta dos veículos / investimento da campanha; não é margem. Uma venda só entra numa campanha quando o comprador é um contato da Helena com UTM de anúncio — {{ (vendas.total - vendas.com_anuncio) | num }} das {{ vendas.total | num }} vendas do período não têm origem digital identificada.</p>
+  </div>
+
+  <div class="cartao largo">
+    <h2>Campanhas de disparo (WhatsApp) {{ m.ajuda('Cada mensagem de campanha enviada pela loja na Helena, em qualquer conversa (nova ou já aberta), agrupada pelo modelo de mensagem e pelo dia do envio. Respondeu = o cliente escreveu depois do disparo. Venda = o telefone do destinatário aparece no DMS com venda em data igual ou posterior ao disparo; cada venda conta uma vez, no último disparo recebido antes da compra. Ordenado pelas que mais venderam.') }}</h2>
+    <p class="nota">{{ campanhas_disparo.enviados | num }} disparos · {{ campanhas_disparo.responderam | num }} responderam · {{ campanhas_disparo.vendas | num }} vendas · {{ campanhas_disparo.receita | brl }}
+      {% if campanhas_disparo.pendentes %}· <span class="selo azul">{{ campanhas_disparo.pendentes | num }} conversas ainda por varrer — a lista cresce enquanto a varredura roda</span>{% endif %}</p>
+    {% if campanhas_disparo.linhas %}
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>Disparo (modelo de mensagem)</th><th>Data</th>{% if selecionadas | length > 1 %}<th>Unidade</th>{% endif %}<th class="num">Enviados</th><th class="num">Responderam</th><th class="num">Vendas</th><th class="num">Receita</th></tr></thead>
+        <tbody>
+          {% for r in campanhas_disparo.linhas %}
+          <tr>
+            <td>{{ r.nome }}</td>
+            <td>{{ r.dia | br('%d/%m/%Y') }}</td>
+            {% if selecionadas | length > 1 %}<td>{{ r.lojas | title }}</td>{% endif %}
+            <td class="num">{{ r.enviados | num }}</td>
+            <td class="num">{{ r.responderam | num }} <small class="muted">{{ r.responderam | pct(r.enviados) }}</small></td>
+            <td class="num">{{ r.vendas | num }}</td>
+            <td class="num">{{ r.receita | brl if r.vendas else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="vazio">{% if filtros.origem or filtros.campanha %}Disparos não têm origem de mídia nem campanha de anúncio — limpe esses filtros para ver.{% else %}Nenhum disparo no período.{% endif %}</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const G = {{ graficos | safe }};
+rosca('g_midia', G.por_midia.map(r => r.rotulo), G.por_midia.map(r => r.total), G.por_midia.map(r => r.cor),
+      { legenda: 'right', rotuloTotal: 'conversas', clique: i => filtrar('origem', G.por_midia[i].rotulo) });
+barras('g_campanha', G.campanha_barras.map(r => r.rotulo), [{ nome: 'Conversas', dados: G.campanha_barras.map(r => r.total), cor: '#2a78d6' }],
+      { horizontal: true, clique: i => { const r = G.campanha_barras[i]; if (!r.agrupado) filtrar('campanha', r.campanha); } });
+rosca('g_vendas_origem', G.vendas_origem.map(r => r.rotulo), G.vendas_origem.map(r => r.total), G.vendas_origem.map(r => r.cor),
+      { legenda: 'bottom', rotuloTotal: 'vendas', clique: i => { const r = G.vendas_origem[i].rotulo; const mapa = {'Facebook': 'Facebook', 'Instagram': 'Instagram', 'Google': 'Google', 'Sem origem de campanha': 'Sem UTM (orgânico, Google ou direto)'}; if (mapa[r]) filtrar('origem', mapa[r]); } });
+barras('g_inv_midia', G.invest_midia.map(r => r.rotulo), [{ nome: 'Investimento', dados: G.invest_midia.map(r => r.total), cores: G.invest_midia.map(r => r.cor) }],
+      { horizontal: true, formato: fmtBRL, clique: i => { if (G.invest_midia[i].origem) filtrar('origem', G.invest_midia[i].origem); } });
+barras('g_inv_campanha', G.invest_campanha.map(r => r.rotulo), [
+        { nome: 'Facebook', dados: G.invest_campanha.map(r => r.facebook), cor: '#2563eb' },
+        { nome: 'Instagram', dados: G.invest_campanha.map(r => r.instagram), cor: '#db2777' },
+        { nome: 'Meta outros', dados: G.invest_campanha.map(r => r.outros), cor: '#94a3b8' },
+        { nome: 'Google', dados: G.invest_campanha.map(r => r.google), cor: '#d97706' },
+      ].filter(s => s.dados.some(v => v > 0)),
+      { horizontal: true, empilhado: true, formato: fmtBRL, clique: i => filtrar('campanha', G.invest_campanha[i].campanha) });
+barras('g_cpl_plat', G.cpl_plat.map(r => r.rotulo), [{ nome: 'CPL', dados: G.cpl_plat.map(r => r.cpl), cores: G.cpl_plat.map(r => r.plataforma === 'Meta' ? '#475569' : '#d97706') }],
+      { horizontal: true, formato: v => fmtBRL2(v), rotulos: G.cpl_plat.map(r => `${fmtBRL2(r.cpl)} · ${fmtN(r.leads)} leads`), clique: i => filtrar('campanha', G.cpl_plat[i].campanha) });
+barras('g_cpl_conv', G.cpl_conv.map(r => r.rotulo), [{ nome: 'CPL', dados: G.cpl_conv.map(r => r.cpl), cor: '#475569' }],
+      { horizontal: true, formato: v => fmtBRL2(v), rotulos: G.cpl_conv.map(r => `${fmtBRL2(r.cpl)} · ${fmtN(r.leads)} conversas`), clique: i => filtrar('campanha', G.cpl_conv[i].campanha) });
+linhas('g_serie', G.serie.dias, [
+  { nome: 'Leads das plataformas', dados: G.serie.leads_plataforma, cor: '#475569' },
+  { nome: 'Conversas na Helena', dados: G.serie.conversas, cor: '#2563eb', area: true },
+]);
+</script>
+{% endblock %}

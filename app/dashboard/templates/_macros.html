@@ -1,0 +1,41 @@
+{% macro ajuda(texto) %}<button type="button" class="ajuda" aria-label="O que é isso?" data-tip="{{ texto }}">?</button>{% endmacro %}
+
+{% macro kpi(rotulo, valor, sub=None, formato='num', dica=None) %}
+<div class="cartao kpi">
+  <div class="rotulo">{{ rotulo }}{% if dica %} {{ ajuda(dica) }}{% endif %}</div>
+  <div class="valor">
+    {%- if formato == 'brl' -%}{{ valor | brl }}
+    {%- elif formato == 'pct' -%}{{ valor }}
+    {%- elif formato == 'texto' -%}{{ valor }}
+    {%- else -%}{{ valor | num }}
+    {%- endif -%}
+  </div>
+  <div class="sub">{{ sub or '' }}</div>
+</div>
+{% endmacro %}
+
+{% macro barra_tabela(valor, maximo, classe='') %}
+<div class="barra {{ classe }}"><i style="width: {{ (100 * valor / maximo) if maximo else 0 }}%"></i></div>
+{% endmacro %}
+
+{% macro ponto(cor) %}<span class="ponto" style="background: {{ cor }}"></span>{% endmacro %}
+
+{% macro ranking(itens, rotulo_attr, valor_attr, formato='num', sub_attr=None, sub_formato='brl') %}
+{% set maximo = itens[0][valor_attr] if itens else 0 %}
+<ol class="ranking">
+  {% for it in itens %}
+  <li>
+    <div class="nome">
+      <span>{{ it[rotulo_attr] }}</span>
+      <div class="barra"><i style="width: {{ (100 * it[valor_attr] / maximo) if maximo else 0 }}%"></i></div>
+    </div>
+    <span class="num">
+      {%- if formato == 'brl' -%}{{ it[valor_attr] | brl }}{%- else -%}{{ it[valor_attr] | num }}{%- endif -%}
+      {% if sub_attr %}<small>{% if sub_formato == 'brl' %}{{ it[sub_attr] | brl }}{% else %}{{ it[sub_attr] }}{% endif %}</small>{% endif %}
+    </span>
+  </li>
+  {% else %}
+  <li class="vazio">Sem dados no período.</li>
+  {% endfor %}
+</ol>
+{% endmacro %}

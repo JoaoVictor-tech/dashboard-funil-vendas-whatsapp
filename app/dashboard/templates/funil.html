@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+
+<h1>Funil e time</h1>
+<p class="legenda">
+  {{ filtros.de | br('%d/%m/%Y') }} a {{ filtros.ate | br('%d/%m/%Y') }} · {{ nome_unidades }}
+  {% if filtros.origem %}· origem <b>{{ filtros.origem }}</b>{% endif %}
+  {% if filtros.campanha %}· campanha <b>{{ filtros.campanha | curta }}</b>{% endif %}
+  {% if filtros.vendedor %}· vendedor <b>{{ filtros.vendedor }}</b> — os rankings continuam mostrando o time inteiro{% endif %}
+</p>
+
+<div class="grade g2">
+  <div class="cartao">
+    <h2>Classificação dos leads — quantidade total × conversas iniciadas {{ m.ajuda('Do maior para o menor: o que as plataformas dizem que geraram → o que virou conversa real → quantas dessas conversas trazem a etiqueta do anúncio Meta (as únicas que dá para ligar a uma campanha).') }}</h2>
+    <p class="nota">Plataformas de mídia × conversas reais na Helena</p>
+    {% set maximo = [midia.conversas_meta + midia.leads_google, conversas.total, 1] | max %}
+    <div class="comparativo">
+      {% for rotulo, sub, valor, cor in [
+        ('Leads reportados pelas plataformas', 'Meta ' ~ (midia.conversas_meta | num) ~ ' · Google ' ~ (midia.leads_google | num), midia.conversas_meta + midia.leads_google, '#475569'),
+        ('Conversas iniciadas na Helena', 'todas as origens' if not filtros.vendedor else 'atendidas por ' ~ filtros.vendedor, conversas.total, '#14202c'),
+        ('… com UTM de anúncio Meta', 'ligadas a uma campanha', conversas.meta, '#2563eb'),
+      ] %}
+      <div class="linha">
+        <div class="rotulo"><b>{{ rotulo }}</b><span>{{ sub }}</span></div>
+        <div class="trilho"><i style="width: {{ 100 * valor / maximo }}%; background: {{ cor }}"></i></div>
+        <span class="num valor">{{ valor | num }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="nota">
+      {% if not filtros.vendedor %}Conversas Helena com UTM Meta correspondem a <b>{{ conversas.meta | pct(midia.conversas_meta) }}</b> das conversas que a Meta reporta — diferença esperada (UTM ausente em parte dos cliques).{% else %}O filtro de vendedor não se aplica aos números das plataformas.{% endif %}
+    </p>
+  </div>
+
+  <div class="cartao">
+    <h2>Leads que compraram veículo {{ m.ajuda('Três números diferentes: conversas cujo cliente comprou no período · carros vendidos para quem veio de anúncio · todos os carros vendidos. Os dois primeiros são fatias do terceiro e não somam entre si.') }}</h2>
+    <p class="nota">Contato da conversa aparece como comprador no DMS dentro do período</p>
+    <div class="kpis-mini">
+      {{ m.kpi('Conversas cujo contato comprou', compraram, (compraram | pct(conversas.total)) ~ ' das conversas') }}
+      {{ m.kpi('Vendas com origem em anúncio', vendas.com_anuncio, 'no DMS, no período') }}
+      {{ m.kpi('Vendas de disparos', disparos.vendas, 'telefone recebeu disparo e comprou depois') }}
+      {{ m.kpi('Total de Vendas (Disparos + Anúncios)', digitais.total, ((' (' ~ (digitais.ambos | num) ~ ' em ambos) · ') if digitais.ambos else '') ~ (digitais.receita | brl)) }}
+      {{ m.kpi('Vendas totais da unidade', vendas.total, vendas.receita | brl) }}
+    </div>
+  </div>
+
+  <div class="cartao largo">
+    <h2>Qualificação dos leads por campanha {{ m.ajuda('Situação de cada conversa: comprou (aparece no DMS) · perdido (marcado pelo vendedor) · encerrada sem marcação · em andamento. "Sem UTM" junta orgânico, Google e direto. A última barra são os disparos de WhatsApp: só quem respondeu ao disparo entra.') }}</h2>
+    <p class="nota">Situação da conversa na Helena: comprou · perdido (classificação) · encerrada sem classificação · em andamento · clique numa barra para filtrar pela campanha</p>
+    {% if qualificacao %}
+    <div style="height: {{ [200, 30 * qualificacao | length + 60] | max }}px"><canvas id="g_qualificacao"></canvas></div>
+    {% else %}
+    <div class="vazio">Sem conversas no recorte — {% if avisos %}a unidade selecionada ainda não tem a conta Helena conectada{% else %}nenhuma conversa no período com estes filtros{% endif %}.</div>
+    {% endif %}
+  </div>
+
+  </div>
+<div class="grade g2" style="margin-top:14px">
+  <div class="cartao">
+    <h2>Top 5 vendedores que mais atenderam leads {{ m.ajuda('Conversas em que o vendedor respondeu ao cliente, por vendedor. Não é venda — é atendimento.') }}</h2>
+    <p class="nota">Conversas com primeira resposta do vendedor (Helena)</p>
+    {% if top_atend %}{{ m.ranking(top_atend, 'nome', 'atendidas') }}{% else %}<div class="vazio">Sem conversas no recorte.</div>{% endif %}
+  </div>
+
+  <div class="cartao">
+    <h2>Top 5 vendedores que mais venderam — qtde de vendas {{ m.ajuda('Carros faturados no DMS por vendedor, no período — de qualquer origem, com ou sem anúncio.') }}</h2>
+    <p class="nota">DMS · {{ nome_unidades }} · todas as vendas, com ou sem origem digital</p>
+    {{ m.ranking(top_vendas, 'nome', 'vendas', sub_attr='receita') }}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const G = {{ graficos | safe }};
+const chaves = ['comprou', 'perdido', 'encerrada', 'andamento'];
+barras('g_qualificacao', G.qualificacao.map(r => r.campanha),
+  chaves.map(k => ({ nome: G.situacoes[k], dados: G.qualificacao.map(r => r[k]), cor: G.cores[k] })),
+  { horizontal: true, empilhado: true, clique: i => { const r = G.qualificacao[i]; if (!r.nome.startsWith('Sem UTM') && !r.nome.startsWith('Anúncio Meta') && !r.nome.startsWith('Disparos')) filtrar('campanha', r.nome); } });
+</script>
+{% endblock %}

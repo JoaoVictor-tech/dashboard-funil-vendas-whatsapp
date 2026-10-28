@@ -1,0 +1,48 @@
+# Monitor de Funil: API + dashboard e um Postgres proprio.
+#
+# Demonstracao (sem nenhuma API externa):
+#   cp .env.example .env
+#   docker compose up -d --build
+#   docker compose exec api python -m app.cli demo
+#   -> http://127.0.0.1:8076/dashboard  (usuario e senha do .env)
+#
+# Em producao: MODO_DEMO=false, tokens da Helena e do Reportei no .env, e o coletor roda
+# sozinho a cada COLETA_INTERVALO_MIN minutos.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: monitor_funil_db
+    environment:
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: monitor
+      POSTGRES_DB: monitor
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: monitor-funil:latest
+    container_name: monitor_funil_api
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8076:8000"   # publico so via proxy reverso (nginx) na frente
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pgdata:
